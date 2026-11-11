@@ -6,7 +6,7 @@ measure its precision and recall, then choose the threshold on purpose instead o
 This repo applies the precision/recall tools from chapter 3 of Géron's *Hands-On Machine Learning*
 to alerting on a **simulated** Kubernetes service, and adapts them to how alerting data behaves.
 
-![Precision and recall vs. alert threshold](figures/precision_recall_vs_threshold.png)
+![Window precision and recall vs. alert threshold](figures/precision_recall_vs_threshold.png)
 
 ## The scenario (all data is simulated)
 
@@ -22,12 +22,12 @@ as with `decision_function` in the book. The default threshold is the lowest one
 
 ## Results on the 10 test days
 
-|  | Precision (window) | Recall (window) | False-alarm windows | Precision (incident) | Recall (incident) | False alert episodes |
+|  | Precision (window) | Recall (window) | False-alarm windows | Precision (alert episode) | Recall (incident) | False alert episodes |
 |---|---|---|---|---|---|---|
 | Classifier, threshold −0.43 | 91% | 84% | 15 | 70% | 16 / 17 | 11 |
 | Rule: 5xx rate over 15 min > 1% | 54% | 45% | 64 | 41% | 13 / 17 | 24 |
 
-![Precision vs. recall](figures/precision_vs_recall.png)
+![Window precision vs. recall](figures/precision_vs_recall.png)
 
 The single-metric rule sits well inside the classifier's curve: several signals together give a better model,
 not just a better threshold.
@@ -47,8 +47,23 @@ The same predictions look different depending on what counts as a positive:
   consecutive alerted windows, and it's a false alert if it overlaps no incident.
 
 At the chosen threshold, the classifier catches 16 of 17 test incidents even though per-window recall is 84%.
-But per-incident precision drops to 70%, because the false alarms are short, separate blips: 15 false windows
-make 11 separate false pages. In practice, a pending duration (Prometheus `for:`) would suppress many of them.
+But alert-episode precision drops to 70%, because the false alarms are short, separate blips: 15 false windows
+make 11 separate false alert episodes. These episodes do not model actual notification delivery.
+
+Overlap scores alone can be misleading: an alert that stays active throughout the test gets 100% episode
+precision and incident recall whenever there is at least one incident. An alert in the last window of an
+incident also counts as a catch. The evaluation therefore reports timing alongside overlap:
+
+|  | Mean detection delay (min) | Alert-active time (min) | Alert-active time outside incidents (min) |
+|---|---|---|---|
+| Classifier, threshold −0.43 | 0.9 | 790 | 75 |
+| Rule: 5xx rate over 15 min > 1% | 10.8 | 700 | 320 |
+
+Detection delay runs from incident onset to its first alerted window, measured in 5-minute steps.
+The mean covers caught incidents only; if none are caught, it is reported as `N/A`. An alert already active
+at incident onset has zero delay. Read delay alongside incident recall, since missed incidents are excluded.
+Alert-active time sums all alerted windows; time outside incidents exposes persistent false alerting even
+when one long alert episode overlaps real incidents. These metrics assume contiguous 5-minute windows.
 
 ## Run it
 

@@ -34,12 +34,20 @@ def main():
         ("Rule: 5xx (15m) > 1%", window_metrics(r.y, r.rule), incident_metrics(r.y, r.rule)),
     ]
     print(f"Test set: {len(r.y)} windows, {r.y.sum()} incident windows\n")
-    print(f"{'':24} {'per window':>22} {'per incident':>30}")
+    print(f"{'':24} {'per window':>22} {'episodes / incidents':>30}")
     print(f"{'':24} {'P':>6} {'R':>6} {'false':>8} {'P':>8} {'R':>6} {'caught':>9} {'false':>6}")
     for name, w, i in rows:
         print(f"{name:24} {w['precision']:>6.0%} {w['recall']:>6.0%} {w['false_alarm_windows']:>8}"
               f" {i['precision']:>8.0%} {i['recall']:>6.0%}"
               f" {i['caught']:>4}/{i['incidents']:<4} {i['false_alert_episodes']:>6}")
+
+    print("\nTiming (5-minute windows; delay covers caught incidents only):")
+    for name, _, i in rows:
+        delay = i["mean_detection_delay_minutes"]
+        delay_text = "N/A" if delay is None else f"{delay:.1f} min"
+        print(f"{name}: mean detection delay {delay_text}, "
+              f"alert active {i['alert_active_minutes']} min "
+              f"({i['false_alert_minutes']} min outside incidents)")
 
     precision_recall_vs_threshold(r, "figures/precision_recall_vs_threshold.png")
     precision_vs_recall(r, "figures/precision_vs_recall.png")

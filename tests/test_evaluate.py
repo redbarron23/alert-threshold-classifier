@@ -28,6 +28,40 @@ def test_incident_metrics_counts_episodes_not_windows():
     assert (m["incidents"], m["caught"]) == (2, 1)
     assert (m["alert_episodes"], m["false_alert_episodes"]) == (2, 1)
     assert m["precision"] == 0.5 and m["recall"] == 0.5
+    assert m["mean_detection_delay_minutes"] == 5
+    assert m["alert_active_minutes"] == 15
+    assert m["false_alert_minutes"] == 10
+
+
+def test_always_active_alert_has_perfect_overlap_but_exposes_false_alert_time():
+    y = np.array([0, 0, 1, 0, 0, 1, 0])
+    m = incident_metrics(y, np.ones(7))
+    assert m["precision"] == 1 and m["recall"] == 1
+    assert m["alert_episodes"] == 1 and m["false_alert_episodes"] == 0
+    assert m["mean_detection_delay_minutes"] == 0
+    assert m["alert_active_minutes"] == 35
+    assert m["false_alert_minutes"] == 25
+
+
+def test_detection_delay_includes_alerts_in_last_incident_window():
+    m = incident_metrics(np.array([0, 1, 1, 1, 0]), np.array([0, 0, 0, 1, 0]))
+    assert m["recall"] == 1
+    assert m["mean_detection_delay_minutes"] == 10
+    assert m["alert_active_minutes"] == 5
+    assert m["false_alert_minutes"] == 0
+
+
+@pytest.mark.parametrize("y, pred, active_minutes", [
+    ([1, 1, 0], [0, 0, 0], 0),
+    ([0, 0, 0], [1, 1, 1], 15),
+    ([], [], 0),
+])
+def test_no_caught_incidents_have_no_detection_delay(y, pred, active_minutes):
+    m = incident_metrics(np.array(y), np.array(pred))
+    assert m["mean_detection_delay_minutes"] is None
+    assert m["caught"] == 0
+    assert m["alert_active_minutes"] == active_minutes
+    assert m["false_alert_minutes"] == active_minutes
 
 
 def test_choose_threshold_lowest_reaching_target():
