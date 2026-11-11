@@ -23,7 +23,10 @@ def main():
 
     df = simulate(args.seed)
     df.to_csv("data/k8s_checkout_metrics.csv", index=False)
-    r = train_and_score(df, args.precision)
+    try:
+        r = train_and_score(df, args.precision)
+    except ValueError as e:
+        raise SystemExit(f"error: {e}")
 
     pred = r.scores >= r.threshold
     rows = [
@@ -41,7 +44,7 @@ def main():
     precision_recall_vs_threshold(r, "figures/precision_recall_vs_threshold.png")
     precision_vs_recall(r, "figures/precision_vs_recall.png")
     threshold_tradeoff(r, "figures/threshold_tradeoff.png",
-                       {"Low": -2.0, "Chosen": r.threshold, "High": 2.0})
+                       {"Low": r.threshold - 2, "Chosen": r.threshold, "High": r.threshold + 2})
     print("\nFigures written to figures/")
 
 

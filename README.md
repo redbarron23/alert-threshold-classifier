@@ -14,16 +14,17 @@ to alerting on a **simulated** Kubernetes service, and adapts them to how alerti
   CPU throttling, memory working set and ready-replica ratio, with a daily traffic cycle.
 - 45 labelled incidents of four kinds (OOM, failing dependency, crashloop, slow database), some deliberately subtle.
 - Noise that looks bad but isn't an incident: 120 rolling deploys and 60 nightly batch jobs.
-- Time-based split: train on days 1–20, test on days 21–30. About 6% of test windows are incident time.
+- Time-based split: train on days 1–14, pick the threshold on days 15–20, test on days 21–30.
+  The test set never influences a choice. About 6% of test windows are incident time.
 
 The model is a logistic regression on all signals. Its decision score is what the threshold moves along,
-as with `decision_function` in the book. The default threshold is the lowest one reaching 90% precision.
+as with `decision_function` in the book. The default threshold is the lowest one reaching 90% precision on the validation days.
 
 ## Results on the 10 test days
 
 |  | Precision (window) | Recall (window) | False-alarm windows | Precision (incident) | Recall (incident) | False alert episodes |
 |---|---|---|---|---|---|---|
-| Classifier, threshold −0.36 | 90% | 83% | 15 | 69% | 17 / 17 | 11 |
+| Classifier, threshold −0.43 | 91% | 84% | 15 | 70% | 16 / 17 | 11 |
 | Rule: 5xx rate over 15 min > 1% | 54% | 45% | 64 | 41% | 13 / 17 | 24 |
 
 ![Precision vs. recall](figures/precision_vs_recall.png)
@@ -45,8 +46,8 @@ The same predictions look different depending on what counts as a positive:
 - **Per incident:** an incident counts as caught if any window is alerted. An *alert episode* is a run of
   consecutive alerted windows, and it's a false alert if it overlaps no incident.
 
-At the chosen threshold, the classifier catches every test incident (17/17) even though per-window recall is 83%.
-But per-incident precision drops to 69%, because the false alarms are short, separate blips: 15 false windows
+At the chosen threshold, the classifier catches 16 of 17 test incidents even though per-window recall is 84%.
+But per-incident precision drops to 70%, because the false alarms are short, separate blips: 15 false windows
 make 11 separate false pages. In practice, a pending duration (Prometheus `for:`) would suppress many of them.
 
 ## Run it
@@ -59,6 +60,7 @@ uv run main.py --precision 0.8  # try another precision target
 ```
 
 `uv run` creates the virtual environment and installs the locked dependencies on first use.
+Run the tests with `uv run pytest`.
 
 This writes the dataset to `data/` and the figures to `figures/`, and prints the table above.
 The seed is fixed, so results are reproducible.
@@ -71,6 +73,7 @@ The seed is fixed, so results are reproducible.
 | `evaluate.py` | Time-based split, training, threshold choice, per-window and per-incident metrics |
 | `plots.py` | The three figures |
 | `main.py` | Runs everything and prints the results table |
+| `tests/` | Unit tests for the metrics and threshold choice |
 
 ## Caveats
 
