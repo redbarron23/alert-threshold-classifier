@@ -5,16 +5,18 @@
 """
 import argparse
 import os
+from pathlib import Path
 
-from evaluate import incident_metrics, train_and_score, window_metrics
+from evaluate import alert_policy, incident_metrics, train_and_score, window_metrics
 from plots import precision_recall_vs_threshold, precision_vs_recall, threshold_tradeoff
 from simulate import simulate
+from score import save_model
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--precision", type=float, default=0.90,
-                    help="precision target used to pick the threshold (default 0.90)")
+                    help="validation window and episode precision target after pending (default 0.90)")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
@@ -28,12 +30,18 @@ def main():
     except ValueError as e:
         raise SystemExit(f"error: {e}")
 
-    pred = r.scores >= r.threshold
+    pred = alert_policy(r.scores >= r.threshold)
     rows = [
         (f"Classifier @ {r.threshold:.2f}", window_metrics(r.y, pred), incident_metrics(r.y, pred)),
         ("Rule: 5xx (15m) > 1%", window_metrics(r.y, r.rule), incident_metrics(r.y, r.rule)),
     ]
+    if r.tuned_rule is not None:
+        rows.append((f"Tuned 5xx >= {r.tuned_rule_threshold:.2f}%",
+                     window_metrics(r.y, r.tuned_rule), incident_metrics(r.y, r.tuned_rule)))
+    else:
+        print("Tuned 5xx rule: no validation threshold meets the precision targets")
     print(f"Test set: {len(r.y)} windows, {r.y.sum()} incident windows\n")
+    print("Policy: fire on the second consecutive above-threshold sample; clear immediately.\n")
     print(f"{'':24} {'per window':>22} {'episodes / incidents':>30}")
     print(f"{'':24} {'P':>6} {'R':>6} {'false':>8} {'P':>8} {'R':>6} {'caught':>9} {'false':>6}")
     for name, w, i in rows:
@@ -47,13 +55,16 @@ def main():
         delay_text = "N/A" if delay is None else f"{delay:.1f} min"
         print(f"{name}: mean detection delay {delay_text}, "
               f"alert active {i['alert_active_minutes']} min "
-              f"({i['false_alert_minutes']} min outside incidents)")
+              f"({i['false_alert_minutes']} min outside incidents), "
+              f"{i['false_alert_episodes_per_day']:.2f} false episodes/day")
 
     precision_recall_vs_threshold(r, "figures/precision_recall_vs_threshold.png")
     precision_vs_recall(r, "figures/precision_vs_recall.png")
     threshold_tradeoff(r, "figures/threshold_tradeoff.png",
                        {"Low": r.threshold - 2, "Chosen": r.threshold, "High": r.threshold + 2})
     print("\nFigures written to figures/")
+    path = save_model(r, args.seed, args.precision, Path("artifacts"))
+    print(f"Model, threshold, feature order, policy and run metadata written to {path}")
 
 
 if __name__ == "__main__":

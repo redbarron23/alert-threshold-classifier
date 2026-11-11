@@ -13,3 +13,5 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.3
       - run: uv run pytest
       - run: uv run main.py
+      - run: uv run score.py artifacts/*.pkl data/k8s_checkout_metrics.csv data/shadow_predictions.csv --as-of 2026-10-31T00:00:00Z
+      - run: uv run benchmark.py --seeds 2

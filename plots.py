@@ -2,7 +2,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-from evaluate import Results, window_metrics
+from evaluate import Results, alert_policy, window_metrics
 
 BLUE, ORANGE = "#2a78d6", "#eb6834"
 INK, MUTED, GRID, SURFACE = "#0b0b0b", "#52514e", "#e4e3df", "#fcfcfb"
@@ -21,7 +21,7 @@ def _grid(ax):
 
 def precision_recall_vs_threshold(r: Results, path: str):
     """Géron Fig. 3-5."""
-    m = window_metrics(r.y, r.scores >= r.threshold)
+    m = window_metrics(r.y, alert_policy(r.scores >= r.threshold))
     fig, ax = plt.subplots(figsize=(9, 4.8))
     ax.plot(r.thresholds, r.precisions[:-1], "--", color=BLUE, lw=2,
             label="Window precision")
@@ -42,7 +42,7 @@ def precision_recall_vs_threshold(r: Results, path: str):
     ax.set_title("checkout: window precision and recall vs. alert threshold",
                  loc="left", color=INK, fontsize=13)
     fig.text(0.01, 0.01, f"10 held-out days: {r.y.sum()}/{len(r.y)} incident windows. "
-             "Higher thresholds alert on fewer windows and miss more incident time.",
+             "All curves use the two-sample pending policy.",
              color=MUTED, fontsize=8.5)
     fig.tight_layout(rect=(0, 0.04, 1, 1))
     fig.savefig(path, dpi=160)
@@ -51,7 +51,7 @@ def precision_recall_vs_threshold(r: Results, path: str):
 
 def precision_vs_recall(r: Results, path: str):
     """Géron Fig. 3-6, with the single-metric rule for comparison."""
-    m = window_metrics(r.y, r.scores >= r.threshold)
+    m = window_metrics(r.y, alert_policy(r.scores >= r.threshold))
     b = window_metrics(r.y, r.rule)
     fig, ax = plt.subplots(figsize=(6.4, 5.6))
     ax.plot(r.recalls, r.precisions, color=BLUE, lw=2, label="Multi-signal classifier")
@@ -65,11 +65,15 @@ def precision_vs_recall(r: Results, path: str):
     ax.annotate(f"P {b['precision']:.0%} / R {b['recall']:.0%}", (b["recall"], b["precision"]),
                 xytext=(10, -18), textcoords="offset points", fontsize=10, color=INK)
     ax.set_xlim(0, 1.02); ax.set_ylim(0, 1.02)
+    if r.tuned_rule is not None:
+        tuned = window_metrics(r.y, r.tuned_rule)
+        ax.plot([tuned["recall"]], [tuned["precision"]], "D", color=INK, ms=7,
+                label=f"Tuned 5xx rule: >= {r.tuned_rule_threshold:.2f}%")
     ax.set_xlabel("Window recall")
     ax.set_ylabel("Window precision")
     _grid(ax)
     ax.legend(loc="lower left", frameon=False)
-    ax.set_title("Window precision vs. recall", loc="left", color=INK, fontsize=13)
+    ax.set_title("Window precision vs. recall (with pending)", loc="left", color=INK, fontsize=13)
     fig.tight_layout()
     fig.savefig(path, dpi=160)
     plt.close(fig)
@@ -78,7 +82,7 @@ def precision_vs_recall(r: Results, path: str):
 def threshold_tradeoff(r: Results, path: str, settings: dict[str, float]):
     """False alarms vs. missed incident time at a few thresholds (for part 2)."""
     names = list(settings)
-    ms = [window_metrics(r.y, r.scores >= t) for t in settings.values()]
+    ms = [window_metrics(r.y, alert_policy(r.scores >= t)) for t in settings.values()]
     fa = [m["false_alarm_windows"] for m in ms]
     missed = [m["missed_windows"] for m in ms]
 

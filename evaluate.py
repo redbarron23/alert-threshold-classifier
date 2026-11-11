@@ -1,19 +1,21 @@
 """Train the alert classifier and score it per window and per incident."""
 from dataclasses import dataclass
+import hashlib
 
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import precision_recall_curve, precision_score, recall_score
-from sklearn.pipeline import make_pipeline
+from sklearn.metrics import precision_score, recall_score
+from sklearn.pipeline import Pipeline, make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-from simulate import feature_columns
+from features import FEATURE_COLUMNS, STEP_MINUTES, validate_data
 
 # Time-based split: train on days 1-14, pick the threshold on days 15-20,
 # report results on days 21-30. The test set never influences any choice.
 VAL_DATE = "2026-10-15"
 TEST_DATE = "2026-10-21"
+PENDING_WINDOWS = 2
 
 
 @dataclass
@@ -25,42 +27,102 @@ class Results:
     recalls: np.ndarray
     thresholds: np.ndarray   # test-set curve, for the figures
     threshold: float         # chosen on the validation set
+    model: Pipeline
+    tuned_rule: np.ndarray | None
+    tuned_rule_threshold: float | None
+    data_sha256: str
 
 
 def train_and_score(df: pd.DataFrame, target_precision: float = 0.90) -> Results:
-    features = feature_columns(df)
+    df = validate_data(df, labeled=True)
     train = df[df["ts"] < VAL_DATE]
     val = df[(df["ts"] >= VAL_DATE) & (df["ts"] < TEST_DATE)]
     test = df[df["ts"] >= TEST_DATE]
+    if any(part.empty for part in (train, val, test)):
+        raise ValueError("train, validation and test splits must all be nonempty")
+    if train["incident"].nunique() != 2:
+        raise ValueError("training data must contain both incident classes")
 
     clf = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000))
-    clf.fit(train[features], train["incident"])
+    clf.fit(train[FEATURE_COLUMNS], train["incident"])
 
     # Pick the threshold on validation data, never on the test set
-    val_scores = clf.decision_function(val[features])
-    threshold = choose_threshold(val["incident"].to_numpy(), val_scores, target_precision)
+    val_scores = clf.decision_function(val[FEATURE_COLUMNS])
+    val_y = val["incident"].to_numpy()
+    threshold = choose_threshold(val_y, val_scores, target_precision)
 
-    scores = clf.decision_function(test[features])  # like Géron's sgd_clf.decision_function
+    scores = clf.decision_function(test[FEATURE_COLUMNS])
     y = test["incident"].to_numpy()
-    precisions, recalls, thresholds = precision_recall_curve(y, scores)
+    precisions, recalls, thresholds = policy_curve(y, scores)
 
     # Baseline: the classic single-metric rule "5xx rate (15m) > 1%"
-    rule = test["error_rate_pct_15m"].to_numpy() > 1.0
-    return Results(y, scores, rule, precisions, recalls, thresholds, float(threshold))
+    rule = alert_policy(test["error_rate_pct_15m"].to_numpy() > 1.0)
+    try:
+        rule_threshold = choose_threshold(
+            val_y, val["error_rate_pct_15m"].to_numpy(), target_precision)
+    except ValueError:
+        rule_threshold = None  # An infeasible baseline is reported, never silently relaxed.
+    tuned_rule = (alert_policy(test["error_rate_pct_15m"].to_numpy() >= rule_threshold)
+                  if rule_threshold is not None else None)
+    data_hash = hashlib.sha256(pd.util.hash_pandas_object(
+        df[["ts", *FEATURE_COLUMNS, "incident"]], index=False).to_numpy().tobytes()).hexdigest()
+    return Results(y, scores, rule, precisions, recalls, thresholds, threshold,
+                   clf, tuned_rule, rule_threshold, data_hash)
+
+
+def alert_policy(above: np.ndarray) -> np.ndarray:
+    """Fire on the second consecutive above-threshold sample; clear immediately.
+
+    Every evaluated batch starts inactive. Two 5-minute samples imply a
+    5-minute wait after the first above-threshold sample, not a 10-minute wait.
+    """
+    above = np.asarray(above, dtype=bool)
+    fired = np.zeros(len(above), dtype=bool)
+    fired[1:] = above[1:] & above[:-1]
+    return fired
 
 
 def choose_threshold(y: np.ndarray, scores: np.ndarray, target_precision: float) -> float:
-    """Lowest threshold reaching the precision target, as in Géron ch. 3.
+    """Meet window AND episode precision after pending, then maximize incident recall.
 
-    Raises ValueError if no threshold reaches it, instead of silently
-    falling back to the lowest threshold (which alerts on almost everything).
+    Break ties by fewer false episodes/day, shorter mean detection delay,
+    less false alert time, then the lower threshold. Window precision guards
+    against an always-active alert winning on incident overlap alone.
     """
-    precisions, _, thresholds = precision_recall_curve(y, scores)
-    reached = precisions[:-1] >= target_precision  # last point has no threshold
-    if not reached.any():
-        raise ValueError(f"no threshold reaches {target_precision:.0%} precision "
-                         f"(best is {precisions[:-1].max():.0%})")
-    return float(thresholds[np.argmax(reached)])
+    if not 0 < target_precision <= 1:
+        raise ValueError("precision target must be in (0, 1]")
+    best = None
+    for threshold in np.unique(scores):
+        pred = alert_policy(scores >= threshold)
+        tp = int((pred & (y == 1)).sum())
+        if not pred.any() or tp / pred.sum() < target_precision:
+            continue
+        metrics = incident_metrics(y, pred)
+        if metrics["precision"] < target_precision:
+            continue
+        rank = (-metrics["recall"], metrics["false_alert_episodes_per_day"],
+                metrics["mean_detection_delay_minutes"], metrics["false_alert_minutes"], threshold)
+        if best is None or rank < best[0]:
+            best = (rank, float(threshold))
+    if best is None:
+        raise ValueError(f"no alert threshold reaches {target_precision:.0%} "
+                         "window and episode precision after pending")
+    return best[1]
+
+
+def policy_curve(y: np.ndarray, scores: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Window precision/recall after applying the same pending policy at each threshold."""
+    thresholds, precisions, recalls = [], [], []
+    positives = int((y == 1).sum())
+    for threshold in np.unique(scores):
+        pred = alert_policy(scores >= threshold)
+        if not pred.any():
+            continue
+        thresholds.append(threshold)
+        tp = int((pred & (y == 1)).sum())
+        precisions.append(tp / pred.sum() if pred.any() else 0.0)
+        recalls.append(tp / positives if positives else 0.0)
+    return np.array([*precisions, 1.0]), np.array([*recalls, 0.0]), np.array(thresholds)
 
 
 def _runs(mask: np.ndarray) -> list[tuple[int, int]]:
@@ -92,7 +154,7 @@ def incident_metrics(y: np.ndarray, pred: np.ndarray) -> dict:
     """
     pred = pred.astype(bool)
     incidents, alerts = _runs(y == 1), _runs(pred)
-    delays = [int(np.flatnonzero(pred[a:b])[0]) * 5
+    delays = [int(np.flatnonzero(pred[a:b])[0]) * STEP_MINUTES
               for a, b in incidents if pred[a:b].any()]
     caught = len(delays)
     real_alerts = sum((y[a:b] == 1).any() for a, b in alerts)
@@ -104,6 +166,8 @@ def incident_metrics(y: np.ndarray, pred: np.ndarray) -> dict:
         "alert_episodes": len(alerts),
         "false_alert_episodes": len(alerts) - int(real_alerts),
         "mean_detection_delay_minutes": float(np.mean(delays)) if delays else None,
-        "alert_active_minutes": int(pred.sum()) * 5,
-        "false_alert_minutes": int((pred & (y == 0)).sum()) * 5,
+        "alert_active_minutes": int(pred.sum()) * STEP_MINUTES,
+        "false_alert_minutes": int((pred & (y == 0)).sum()) * STEP_MINUTES,
+        "false_alert_episodes_per_day": ((len(alerts) - int(real_alerts)) * 1440
+                                         / (len(y) * STEP_MINUTES) if len(y) else 0.0),
     }
