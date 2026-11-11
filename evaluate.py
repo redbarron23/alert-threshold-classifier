@@ -82,15 +82,19 @@ def window_metrics(y: np.ndarray, pred: np.ndarray) -> dict:
 
 
 def incident_metrics(y: np.ndarray, pred: np.ndarray) -> dict:
-    """What on-call cares about.
+    """Incident overlap, detection delay and alert duration for 5-minute windows.
 
     Recall: share of incidents with at least one alerted window.
     Precision: share of alert episodes (runs of consecutive alerted windows)
-    that overlap a real incident.
+    that overlap a real incident. Overlap alone rewards alerts that never clear.
+    Mean detection delay is measured from incident onset for caught incidents
+    only (None if none are caught); an already-active alert has zero delay.
     """
     pred = pred.astype(bool)
     incidents, alerts = _runs(y == 1), _runs(pred)
-    caught = sum(pred[a:b].any() for a, b in incidents)
+    delays = [int(np.flatnonzero(pred[a:b])[0]) * 5
+              for a, b in incidents if pred[a:b].any()]
+    caught = len(delays)
     real_alerts = sum((y[a:b] == 1).any() for a, b in alerts)
     return {
         "precision": real_alerts / len(alerts) if alerts else 0.0,
@@ -99,4 +103,7 @@ def incident_metrics(y: np.ndarray, pred: np.ndarray) -> dict:
         "caught": int(caught),
         "alert_episodes": len(alerts),
         "false_alert_episodes": len(alerts) - int(real_alerts),
+        "mean_detection_delay_minutes": float(np.mean(delays)) if delays else None,
+        "alert_active_minutes": int(pred.sum()) * 5,
+        "false_alert_minutes": int((pred & (y == 0)).sum()) * 5,
     }

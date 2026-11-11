@@ -24,9 +24,9 @@ def precision_recall_vs_threshold(r: Results, path: str):
     m = window_metrics(r.y, r.scores >= r.threshold)
     fig, ax = plt.subplots(figsize=(9, 4.8))
     ax.plot(r.thresholds, r.precisions[:-1], "--", color=BLUE, lw=2,
-            label="Precision (pages that were real)")
+            label="Window precision")
     ax.plot(r.thresholds, r.recalls[:-1], "-", color=ORANGE, lw=2,
-            label="Recall (incidents caught)")
+            label="Window recall")
     ax.axvline(r.threshold, color=MUTED, ls=":", lw=1.5)
     for val, c in ((m["precision"], BLUE), (m["recall"], ORANGE)):
         ax.plot([r.threshold], [val], "o", color=c, ms=8, mec=SURFACE, mew=2)
@@ -39,11 +39,11 @@ def precision_recall_vs_threshold(r: Results, path: str):
     ax.set_ylabel("Score")
     _grid(ax)
     ax.legend(loc="center left", frameon=False)
-    ax.set_title("checkout on-call: precision and recall vs. alert threshold",
+    ax.set_title("checkout: window precision and recall vs. alert threshold",
                  loc="left", color=INK, fontsize=13)
-    fig.text(0.01, 0.01, "Simulated data: 10 days of 5-min windows held out, "
-             f"{r.y.sum()} incident windows of {len(r.y)}. Moving the line right = fewer, "
-             "more trustworthy pages, more missed incidents.", color=MUTED, fontsize=8.5)
+    fig.text(0.01, 0.01, f"10 held-out days: {r.y.sum()}/{len(r.y)} incident windows. "
+             "Higher thresholds alert on fewer windows and miss more incident time.",
+             color=MUTED, fontsize=8.5)
     fig.tight_layout(rect=(0, 0.04, 1, 1))
     fig.savefig(path, dpi=160)
     plt.close(fig)
@@ -65,11 +65,11 @@ def precision_vs_recall(r: Results, path: str):
     ax.annotate(f"P {b['precision']:.0%} / R {b['recall']:.0%}", (b["recall"], b["precision"]),
                 xytext=(10, -18), textcoords="offset points", fontsize=10, color=INK)
     ax.set_xlim(0, 1.02); ax.set_ylim(0, 1.02)
-    ax.set_xlabel("Recall (incidents caught)")
-    ax.set_ylabel("Precision (pages that were real)")
+    ax.set_xlabel("Window recall")
+    ax.set_ylabel("Window precision")
     _grid(ax)
     ax.legend(loc="lower left", frameon=False)
-    ax.set_title("Precision vs. recall", loc="left", color=INK, fontsize=13)
+    ax.set_title("Window precision vs. recall", loc="left", color=INK, fontsize=13)
     fig.tight_layout()
     fig.savefig(path, dpi=160)
     plt.close(fig)
