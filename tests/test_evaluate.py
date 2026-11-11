@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from evaluate import _runs, choose_threshold, incident_metrics, window_metrics
+from evaluate import _runs, incident_metrics, window_metrics
 
 
 def test_runs_finds_contiguous_blocks():
@@ -62,18 +62,3 @@ def test_no_caught_incidents_have_no_detection_delay(y, pred, active_minutes):
     assert m["caught"] == 0
     assert m["alert_active_minutes"] == active_minutes
     assert m["false_alert_minutes"] == active_minutes
-
-
-def test_choose_threshold_lowest_reaching_target():
-    y = np.array([0, 0, 1, 0, 1, 1])
-    scores = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
-    assert choose_threshold(y, scores, 0.6) == 0.2   # 3 of 5 at or above 0.2 are real
-    assert choose_threshold(y, scores, 0.7) == 0.3   # 3 of 4
-    assert choose_threshold(y, scores, 1.0) == 0.5
-
-
-def test_choose_threshold_raises_when_unreachable():
-    y = np.array([1, 0, 1, 0])
-    scores = np.array([0.1, 0.9, 0.2, 0.8])  # highest scores are all false
-    with pytest.raises(ValueError, match="no threshold reaches"):
-        choose_threshold(y, scores, 0.9)

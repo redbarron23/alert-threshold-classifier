@@ -66,10 +66,3 @@ def simulate(seed: int = 42) -> pd.DataFrame:
     for c in ["p99_latency_ms", "error_rate_pct", "pod_restarts"]:
         df[c + "_15m"] = df[c].rolling(3, min_periods=1).mean()
     return df
-
-
-FEATURE_EXCLUDE = ("ts", "incident")
-
-
-def feature_columns(df: pd.DataFrame) -> list[str]:
-    return [c for c in df.columns if c not in FEATURE_EXCLUDE]
